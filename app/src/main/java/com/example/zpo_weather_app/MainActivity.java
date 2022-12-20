@@ -10,12 +10,15 @@ import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.location.Address;
+import android.location.Criteria;
 import android.location.Geocoder;
 import android.location.Location;
+import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Parcelable;
+import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
@@ -31,6 +34,7 @@ import com.android.volley.toolbox.StringRequest;
 import com.android.volley.toolbox.Volley;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.squareup.picasso.Picasso;
@@ -43,6 +47,7 @@ import java.io.Serializable;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
@@ -50,9 +55,15 @@ import java.util.Objects;
 /**
  * represents the MainActivity
  */
-public class MainActivity extends AppCompatActivity {
+public class MainActivity extends AppCompatActivity implements LocationListener {
 
     TextView tv;
+    public Criteria criteria;
+    public String bestProvider;
+    public double latitude;
+    public double longitude;
+    public LocationManager locationManager;
+
 
     /**
      * method is called only when the activity starts
@@ -113,6 +124,44 @@ public class MainActivity extends AppCompatActivity {
         queue.add(stringRequest);
     }
 
+    private void getForecastData(String cityName) {
+        String url = "http://api.openweathermap.org/data/2.5/forecast?q="+cityName+"&units=metric&appid=b4d35388fa6838bcdd13de996aa27b00";
+
+        RequestQueue queue = Volley.newRequestQueue(this);
+
+        StringRequest stringRequest = new StringRequest(Request.Method.GET, url, response -> {
+            JsonParser parser = new JsonParser();
+            JsonObject json = (JsonObject) parser.parse(response);
+
+            String cityAndCountry = json.get("city").getAsJsonObject().get("name").getAsString() + ", " + json.get("city").getAsJsonObject().get("country").getAsString();
+            ArrayList<Temperature> temperatures = new ArrayList<>();
+            ArrayList<Cloudiness> clouds = new ArrayList<>();
+
+            JsonArray arr = json.get("list").getAsJsonArray();
+
+            for (int i = 0; i<arr.size(); i++){
+                temperatures.add(new Temperature(arr.get(i).getAsJsonObject().get("main").getAsJsonObject().get("temp").getAsDouble(), arr.get(i).getAsJsonObject().get("dt_txt").getAsString()));
+                clouds.add(new Cloudiness(arr.get(i).getAsJsonObject().get("clouds").getAsJsonObject().get("all").getAsInt(), arr.get(i).getAsJsonObject().get("dt_txt").getAsString()));
+            }
+            Forecast forecast = new Forecast(cityAndCountry, clouds, temperatures);
+            Intent intent = new Intent(this, ForecastActivity2.class);
+            intent.putExtra("EXTRA_FORECAST", forecast);
+
+            startActivity(intent);
+
+
+        }, new Response.ErrorListener() {
+            @Override
+            public void onErrorResponse(VolleyError error) {
+                Toast.makeText(MainActivity.this, "Wrong city name!",
+                        Toast.LENGTH_LONG).show();
+            }
+        }
+        );
+
+        queue.add(stringRequest);
+    }
+
     /**
      * a method that uses Geocoder class to get the name of city
      * @param lat latitude of the city we want to search
@@ -150,27 +199,40 @@ public class MainActivity extends AppCompatActivity {
      * and then calls the getData method
      * but if the city is not found it creates the toast
      */
-    public void onLocationClick() {
+    public void onLocationClick(View view) {
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
-            != PackageManager.PERMISSION_GRANTED){
-                requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},1000);
+//            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
+//            != PackageManager.PERMISSION_GRANTED){
+//                requestPermissions(new String[]{Manifest.permission.ACCESS_COARSE_LOCATION},1000);
+//
+//            }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION)
+                != PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION},1000);
 
-            }
+        }
 
             else {
-                LocationManager locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
-                Location location = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+            criteria = new Criteria();
+            bestProvider = String.valueOf(locationManager.getBestProvider(criteria, true)).toString();
 
-                try {
-                    String city = hereLocation(location.getLatitude(), location.getLongitude());
 
-                    getData(city);
-                } catch (Exception e){
-                    e.printStackTrace();
-                    Toast.makeText(MainActivity.this, "Not found", Toast.LENGTH_SHORT).show();
-                }
+            Location location = locationManager.getLastKnownLocation(bestProvider);
+//                Toast.makeText(MainActivity.this, Double.toString(location.getLatitude()) + " ; " + Double.toString(location.getLongitude()), Toast.LENGTH_SHORT).show();
+            if (location != null) {
+                Log.e("TAG", "GPS is on");
+                latitude = location.getLatitude();
+                longitude = location.getLongitude();
+                Toast.makeText(MainActivity.this, "latitude:" + latitude + " longitude:" + longitude, Toast.LENGTH_SHORT).show();
+                String city = hereLocation(location.getLatitude(), location.getLongitude());
+                getData(city);
 
+            }
+            else{
+                //This is what you need:
+                locationManager.requestLocationUpdates(bestProvider, 1000, 0, this);
+            }
             }
     }
 
@@ -180,11 +242,60 @@ public class MainActivity extends AppCompatActivity {
      * gets the city name from the EditText
      * and then gets data for this city
      */
-    public void showWeather() {
+    public void showWeather(View view) {
         EditText cityInput = (EditText)findViewById(R.id.cityInput);
         String cityName = cityInput.getText().toString();
 
         getData(cityName);
     }
+
+    public void showForecast(View view) {
+        EditText cityInput = (EditText)findViewById(R.id.cityInput);
+        String cityName = cityInput.getText().toString();
+
+        getForecastData(cityName);
+    }
+
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (locationManager != null){
+        locationManager.removeUpdates(this);
+
+        }
+
+    }
+
+    @Override
+    public void onLocationChanged(Location location) {
+        //Hey, a non null location! Sweet!
+
+        //remove location callback:
+        locationManager.removeUpdates(this);
+
+        //open the map:
+        latitude = location.getLatitude();
+        longitude = location.getLongitude();
+        Toast.makeText(MainActivity.this, "latitude:" + latitude + " longitude:" + longitude, Toast.LENGTH_SHORT).show();
+        String city = hereLocation(location.getLatitude(), location.getLongitude());
+        getData(city);
+    }
+
+    @Override
+    public void onStatusChanged(String provider, int status, Bundle extras) {
+
+    }
+
+    @Override
+    public void onProviderEnabled(String provider) {
+
+    }
+
+    @Override
+    public void onProviderDisabled(String provider) {
+
+    }
+
 
 }
